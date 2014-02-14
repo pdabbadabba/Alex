@@ -6,6 +6,7 @@ import itertools
 import zlib
 from collections import deque
 from os import path
+import gzip
 
 KB = 1024
 MB = 1000*KB
@@ -31,7 +32,7 @@ def find_matches(new_file_name, old_sigs, block_size):
 
     new_bytes = ""
 
-    with open(new_file_name, 'rb') as file_bytes, open(patch_file_name, 'wc') as patch_bytes:
+    with open(new_file_name, 'rb') as file_bytes, gzip.open(patch_file_name, 'wc') as patch_bytes:
 
         q  = file_bytes.read(block_size)
 

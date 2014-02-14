@@ -3,20 +3,24 @@
 import hashlib
 import os
 import shelve
+import itertools
 
 db_filename = '.alex_db'
 
 KB = 1024
 MB = 1000*KB
-block_size = 1 * MB
+block_size = 1*MB
 upload_buffer = 5 * MB
 
 bk_dirs = ['../test/']
 
-def mkdir(directory):
-    path = os.path.join(dir_prefix)
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+def commit(file_name, db):
+    print 'Committing ' + file_name
+
+    db[file_name] = {'committed': db[file_name]['staged']}
+
+
+
 
 if __name__ == '__main__':
 
@@ -25,9 +29,10 @@ if __name__ == '__main__':
     for bk_dir in bk_dirs:
 
         db = shelve.open(os.path.join(bk_dir, db_filename), 'c')
-        print db
+
         for root, dirs, files in os.walk(bk_dir):
-            for this_filename in files:
+            for this_filename in itertools.ifilterfalse(lambda n: db_filename in n, files):
+                print " --- " + this_filename
                 this_file = os.path.join(root, this_filename)
 
                 # Write block digests to db
@@ -40,14 +45,17 @@ if __name__ == '__main__':
                         digest = hashlib.sha1(digest + chunk_digest).hexdigest()
 
                     db[str(this_file)] = {
-                                          'stage':
+                                          'staged':
                                           {'blocks': digest_list,
                                            'signature': digest}
                                           }
-#                    db[str(this_file)]['stage'] = {}
-                    #db[str(this_file)]['stage']['blocks'] = digest_list
-                    #db[str(this_file)]['stage']['signature'] = digest
 
+
+        print db
+
+        for a,b in zip(db['../test/doc_v1.doc']['staged']['blocks'], db['../test/doc_v2.doc']['staged']['blocks']):
+            if a[0]==b[0]: print '-------------------'
+            else: print a[0], b[0]
 
         db.close()
 
