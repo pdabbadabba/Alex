@@ -32,7 +32,7 @@ def find_matches(new_file_name, old_sigs, block_size):
 
     new_bytes = ""
 
-    with open(new_file_name, 'rb') as file_bytes, gzip.open(patch_file_name, 'wc') as patch_bytes:
+    with open(new_file_name, 'rb') as file_bytes, gzip.open(patch_file_name, 'wb') as patch_bytes:
 
         q  = file_bytes.read(block_size)
 
@@ -44,9 +44,9 @@ def find_matches(new_file_name, old_sigs, block_size):
 
                 if ((start == q[:5]) and (end == q[-5:])) and zlib.adler32(q) == sig:
                     if len(new_bytes) > 0:
-                        print >> patch_bytes, b64encode(struct.pack('<ci%ds' % (len(new_bytes)), 'n', 0, new_bytes))
+                        print >> patch_bytes, struct.pack('<ci%ds' % (len(new_bytes)), 'n', (len(new_bytes)), new_bytes)
                         new_bytes = ""
-                    print >> patch_bytes, b64encode(struct.pack('<ci0s', 's', sig, ""))
+                    print >> patch_bytes, struct.pack('<ci', 's', sig)
                     q = file_bytes.read(block_size)
                     match = True
 
@@ -56,7 +56,7 @@ def find_matches(new_file_name, old_sigs, block_size):
                 q += byte
 
         new_bytes += q
-        print >> patch_bytes, b64encode(struct.pack('<ci%ds' % (len(new_bytes)), 'n', 0, new_bytes))
+        print >> patch_bytes, struct.pack('<ci%ds' % (len(new_bytes)), 'n', len(new_bytes), new_bytes)
 
 
 def patch(old_file_name, sigs, patch_file_name):
