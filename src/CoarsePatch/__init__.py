@@ -5,11 +5,12 @@ from base64 import b64encode
 import itertools
 import zlib
 from collections import deque, defaultdict
-from os import path
+from os import path, stat
 import gzip
 from hashlib import md5 as HASH
 import pprint
 import sys
+import math
 
 KB = 1024
 MB = 1000*KB
@@ -48,10 +49,12 @@ def weakchecksum(data):
 
 def read_sigs(file_name):
     print "------------------------"
+    d = {}
     sigs = defaultdict(dict)
 
     with gzip.open(file_name, 'rb') as sig_bytes:
-
+        block_size, = struct.unpack('<i', sig_bytes.read(struct.calcsize('i')))
+        d['block_size'] = block_size
         for weak_checksum_bytes in iter(lambda: sig_bytes.read(struct.calcsize('<qh')), ""):
 
             weak_checksum,num_sigs = struct.unpack('<qh', weak_checksum_bytes)
@@ -65,11 +68,14 @@ def read_sigs(file_name):
 
 
 
+    d['sigs'] = sigs
+    return d
 
-    return sigs
-
-def write_sigs(sigs, file_name):
+def write_sigs(d, file_name):
+    sigs = d['sigs']
     with gzip.open(file_name, 'wb') as sig_bytes:
+
+        sig_bytes.write(struct.pack('<i', d['block_size']))
 
         # For each weah checksum group
         for weak_checksum in sigs:
@@ -87,8 +93,16 @@ def write_sigs(sigs, file_name):
 
 
 
-def generate_sigs(file_name, block_size):
+def generate_sigs(file_name, block_size=None):
+    d = dict()
     sig_dict = defaultdict(dict)
+
+
+    if block_size is None: block_size = int(math.sqrt(24*stat(file_name).st_size))
+
+    d['block_size'] = block_size
+
+    print 'block size: ' + str(block_size)
 
     with open(file_name, 'rb') as file_bytes:
 
@@ -101,72 +115,88 @@ def generate_sigs(file_name, block_size):
             sig_dict[c][HASH(block).hexdigest()] = [position, len(block)]
             position += block_size
 
+    d['sigs'] = sig_dict
+    return d
 
-    return sig_dict
+def hash_file(file_name):
+    h = HASH()
+    with open(file_name, 'rb') as in_file:
+        for f in in_file.read(128):
+            h.update(f)
 
-def find_matches(new_file_name, old_sigs, block_size):
+    return h.hexdigest()
+
+
+def find_matches(new_file_name, old_sigs_d):
+
+    old_sigs = old_sigs_d['sigs']
+    block_size = old_sigs_d['block_size']
 
     patch_file_name = path.join(path.split(new_file_name)[0],path.split(new_file_name)[1] + '.patch')
 
     new_bytes = []
+    with gzip.open(patch_file_name, 'wb') as patch_bytes:
 
-    with open(new_file_name, 'rb') as file_bytes, gzip.open(patch_file_name, 'wb') as patch_bytes:
+        patch_bytes.write(struct.pack('<32s', hash_file(new_file_name)))
 
-        q  = deque(file_bytes.read(block_size))
-        c,a,b = weakchecksum(bytes(q))
+        with open(new_file_name, 'rb') as file_bytes:
 
-        for byte in iter(lambda: file_bytes.read(1), ''):
+            q  = deque(file_bytes.read(block_size))
+            c,a,b = weakchecksum(bytes(q))
 
-
-            # Check for matching block
-            sig_hash = None
-            match = None
-            weak_match = None
-            weak_match = old_sigs.get(c)
-            if weak_match:
-                match_hash = HASH(''.join(q)).hexdigest()
-                match = weak_match.get(match_hash)
-                #print weak_match[HASH(''.join(q)).hexdigest()]
-                #print weak_match[HASH(''.join(q)).hexdigest()]
-
-            # If there is a match...
-            if match:
-
-                # If we had accumulated new data, write it out
-                if len(new_bytes) > 0:
-                    new_bytes_str = "".join(new_bytes)
-                    print >> patch_bytes, struct.pack('<ci%ds' % (len(new_bytes_str)), 'n', (len(new_bytes_str)), new_bytes_str)
-                    new_bytes = []
-
-                print >> patch_bytes, struct.pack('<cii', 's', match[0], match[1])
-
-                # refill the queue
-                q=deque(byte + file_bytes.read(block_size-1))
-                c,a,b = weakchecksum(bytes(q))
+            for byte in iter(lambda: file_bytes.read(1), ''):
 
 
-            else:
+                # Check for matching block
+                sig_hash = None
+                match = None
+                weak_match = None
+                weak_match = old_sigs.get(c)
+                if weak_match:
+                    match_hash = HASH(''.join(q)).hexdigest()
+                    match = weak_match.get(match_hash)
+                    #print weak_match[HASH(''.join(q)).hexdigest()]
+                    #print weak_match[HASH(''.join(q)).hexdigest()]
 
-                # roll the window
-                old_byte = q.popleft()
-                q.append(byte)
+                # If there is a match...
+                if match:
 
-                # add old byte to bytes to be written
-                new_bytes.append(old_byte)
+                    # If we had accumulated new data, write it out
+                    if len(new_bytes) > 0:
+                        new_bytes_str = "".join(new_bytes)
+                        print >> patch_bytes, struct.pack('<ci%ds' % (len(new_bytes_str)), 'n', (len(new_bytes_str)), new_bytes_str)
+                        new_bytes = []
 
-                # roll the checksum
-                c,a,b = rollingchecksum(ord(old_byte), ord(byte), a, b, block_size)
+                    print >> patch_bytes, struct.pack('<cii', 's', match[0], match[1])
 
-        # write trailing, unmatched data
-        if len(new_bytes) > 0 or len(q) > 0:
-            new_bytes_str = "".join([''.join(new_bytes), ''.join(q)])
-            print >> patch_bytes, struct.pack('<ci%ds' % (len(new_bytes_str)), 'n', len(new_bytes_str), new_bytes_str)
+                    # refill the queue
+                    q=deque(byte + file_bytes.read(block_size-1))
+                    c,a,b = weakchecksum(bytes(q))
+
+
+                else:
+
+                    # roll the window
+                    old_byte = q.popleft()
+                    q.append(byte)
+
+                    # add old byte to bytes to be written
+                    new_bytes.append(old_byte)
+
+                    # roll the checksum
+                    c,a,b = rollingchecksum(ord(old_byte), ord(byte), a, b, block_size)
+
+            # write trailing, unmatched data
+            if len(new_bytes) > 0 or len(q) > 0:
+                new_bytes_str = "".join([''.join(new_bytes), ''.join(q)])
+                print >> patch_bytes, struct.pack('<ci%ds' % (len(new_bytes_str)), 'n', len(new_bytes_str), new_bytes_str)
 
 
 def patch(original_file_name, patch_file_name, out_file_name):
 
     with open(original_file_name, 'rb') as original_bytes, gzip.open(patch_file_name, 'rb') as patch_bytes, open(out_file_name, 'wb') as out_bytes:
-
+        file_hash, = struct.unpack('<32s', patch_bytes.read(struct.calcsize('<32s')))
+        print file_hash
         for data_type_bytes in iter(lambda: patch_bytes.read(struct.calcsize('<c')), ""):
 
             data_type = struct.unpack('<c', data_type_bytes)[0]
@@ -184,6 +214,8 @@ def patch(original_file_name, patch_file_name, out_file_name):
 
             patch_bytes.read(struct.calcsize('<c'))
 
+    print hash_file(out_file_name)
+
         # If signature
         # ... lookup signature's position in old
         # ... seek to that position
@@ -197,23 +229,21 @@ def patch(original_file_name, patch_file_name, out_file_name):
 
 def GO():
 
-    block_size = 1 * KB
     pp = pprint.PrettyPrinter(depth=6)
 
 #    old_file_name = '../test/doc_v1.doc'
 #    new_file_name = '../test/doc_v2.doc'
 
 
-    old_file_name = '../test/v1.doc'
-    new_file_name = '../test/v2.doc'
+    old_file_name = '../test/v1.html'
+    new_file_name = '../test/v2.html'
 
     sig_file_name = path.join(path.split(old_file_name)[0],path.split(old_file_name)[1] + '.sig')
     patch_file_name = path.join(path.split(new_file_name)[0],path.split(new_file_name)[1] + '.patch')
 
-    sigs = generate_sigs(old_file_name, block_size)
-    write_sigs(sigs, sig_file_name)
-    print read_sigs(sig_file_name)
-    #find_matches(new_file_name, sigs, block_size)
+    write_sigs(generate_sigs(old_file_name), sig_file_name)
+
+    find_matches(new_file_name, read_sigs(sig_file_name))
 
     #old_file_name = '../test/v1.crypt'
     #new_file_name = '../test/v2.crypt'
@@ -221,7 +251,7 @@ def GO():
     #sigs = generate_sigs(old_file_name, block_size)
     #find_matches(new_file_name, sigs, block_size)
 
-    #patch(old_file_name, patch_file_name, '../test/v2.out.doc')
+    patch(old_file_name, patch_file_name, '../test/v2.out.html')
     #print len(sigs['blocks'])
 
 
