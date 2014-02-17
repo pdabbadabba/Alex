@@ -9,6 +9,7 @@ from os import path
 import gzip
 from hashlib import md5 as HASH
 import pprint
+import sys
 
 KB = 1024
 MB = 1000*KB
@@ -44,6 +45,47 @@ def weakchecksum(data):
         i += 1
 
     return (b << 16) | a, a, b
+
+def read_sigs(file_name):
+    print "------------------------"
+    sigs = defaultdict(dict)
+
+    with gzip.open(file_name, 'rb') as sig_bytes:
+
+        for weak_checksum_bytes in iter(lambda: sig_bytes.read(struct.calcsize('<qh')), ""):
+
+            weak_checksum,num_sigs = struct.unpack('<qh', weak_checksum_bytes)
+
+            sigs[weak_checksum] = {}
+            for i in range(num_sigs):
+
+                sig_hash, position, size = struct.unpack('<32sii', sig_bytes.read(struct.calcsize('<32sii')))
+                sigs[weak_checksum][sig_hash] = [position, size]
+
+
+
+
+
+    return sigs
+
+def write_sigs(sigs, file_name):
+    with gzip.open(file_name, 'wb') as sig_bytes:
+
+        # For each weah checksum group
+        for weak_checksum in sigs:
+
+            # Write checksum
+
+            sig_bytes.write(struct.pack('<qh', weak_checksum, len(sigs[weak_checksum])))
+
+            # Write length of matches with this weak checksum
+            # hash + size + position
+
+            for sig_hash in sigs[weak_checksum]:
+
+                sig_bytes.write(struct.pack('<32sii', sig_hash, sigs[weak_checksum][sig_hash][0], sigs[weak_checksum][sig_hash][1]))
+
+
 
 def generate_sigs(file_name, block_size):
     sig_dict = defaultdict(dict)
@@ -164,9 +206,14 @@ def GO():
 
     old_file_name = '../test/v1.doc'
     new_file_name = '../test/v2.doc'
+
+    sig_file_name = path.join(path.split(old_file_name)[0],path.split(old_file_name)[1] + '.sig')
     patch_file_name = path.join(path.split(new_file_name)[0],path.split(new_file_name)[1] + '.patch')
+
     sigs = generate_sigs(old_file_name, block_size)
-    find_matches(new_file_name, sigs, block_size)
+    write_sigs(sigs, sig_file_name)
+    print read_sigs(sig_file_name)
+    #find_matches(new_file_name, sigs, block_size)
 
     #old_file_name = '../test/v1.crypt'
     #new_file_name = '../test/v2.crypt'
@@ -174,7 +221,7 @@ def GO():
     #sigs = generate_sigs(old_file_name, block_size)
     #find_matches(new_file_name, sigs, block_size)
 
-    patch(old_file_name, patch_file_name, '../test/v2.out.doc')
+    #patch(old_file_name, patch_file_name, '../test/v2.out.doc')
     #print len(sigs['blocks'])
 
 
