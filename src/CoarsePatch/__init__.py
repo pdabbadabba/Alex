@@ -11,6 +11,8 @@ from hashlib import md5 as HASH
 import pprint
 import sys
 import math
+import datetime
+import os
 
 KB = 1024
 MB = 1000*KB
@@ -47,6 +49,30 @@ def weakchecksum(data):
 
     return (b << 16) | a, a, b
 
+def hash_file(file_name):
+    h = HASH()
+    with open(file_name, 'rb') as in_file:
+        for f in in_file.read(128):
+            h.update(f)
+
+    return h.hexdigest()
+
+def read_sig_attributes(file_name):
+
+    file_hash = file_size = last_modified = None
+
+    with gzip.open(file_name, 'rb') as sig_bytes:
+
+        #Discard block size
+        sig_bytes.read(struct.calcsize('i'))
+
+        file_hash, = struct.unpack('<32s', sig_bytes.read(struct.calcsize('<32s')))
+        file_size, = struct.unpack('<i', sig_bytes.read(struct.calcsize('<i')))
+        last_modified, = struct.unpack('<f', sig_bytes.read(struct.calcsize('<f')))
+
+    return file_hash, file_size, last_modified
+
+
 def read_sigs(file_name):
     print "------------------------"
     d = {}
@@ -55,6 +81,15 @@ def read_sigs(file_name):
     with gzip.open(file_name, 'rb') as sig_bytes:
         block_size, = struct.unpack('<i', sig_bytes.read(struct.calcsize('i')))
         d['block_size'] = block_size
+
+        d['hash'], = struct.unpack('<32s', sig_bytes.read(struct.calcsize('<32s')))
+        d['size'], = struct.unpack('<i', sig_bytes.read(struct.calcsize('<i')))
+        d['last_modified'], = struct.unpack('<f', sig_bytes.read(struct.calcsize('<f')))
+        d['version'], = struct.unpack('<h', sig_bytes.read(struct.calcsize('<h')))
+        path_len, = struct.unpack('<h', sig_bytes.read(struct.calcsize('<h')))
+        d['path'] = struct.unpack('<%ss' % path_len, sig_bytes.read(struct.calcsize('<%ss' % path_len)))
+
+
         for weak_checksum_bytes in iter(lambda: sig_bytes.read(struct.calcsize('<qh')), ""):
 
             weak_checksum,num_sigs = struct.unpack('<qh', weak_checksum_bytes)
@@ -76,6 +111,15 @@ def write_sigs(d, file_name):
     with gzip.open(file_name, 'wb') as sig_bytes:
 
         sig_bytes.write(struct.pack('<i', d['block_size']))
+        sig_bytes.write(struct.pack('<32s', d['hash']))
+        sig_bytes.write(struct.pack('<i', d['size']))
+        sig_bytes.write(struct.pack('<f', d['last_modified'] ))
+        sig_bytes.write(struct.pack('<h', d['version'] ))
+
+        path_len = len(d['path'])
+        sig_bytes.write(struct.pack('<h', path_len ))
+        sig_bytes.write(struct.pack('<%ss' % path_len, d['path'] ))
+
 
         # For each weah checksum group
         for weak_checksum in sigs:
@@ -93,7 +137,7 @@ def write_sigs(d, file_name):
 
 
 
-def generate_sigs(file_name, block_size=None):
+def generate_sigs(file_name, version=0, block_size=None):
     d = dict()
     sig_dict = defaultdict(dict)
 
@@ -101,6 +145,13 @@ def generate_sigs(file_name, block_size=None):
     if block_size is None: block_size = int(math.sqrt(24*stat(file_name).st_size))
 
     d['block_size'] = block_size
+    d['hash'] = hash_file(file_name)
+    statbuf = os.stat(file_name)
+    d['size'] = statbuf.st_size
+    d['version'] = version
+    d['last_modified'] = statbuf.st_mtime
+    d['path'] = os.path.abspath(file_name)
+
 
     print 'block size: ' + str(block_size)
 
@@ -118,13 +169,7 @@ def generate_sigs(file_name, block_size=None):
     d['sigs'] = sig_dict
     return d
 
-def hash_file(file_name):
-    h = HASH()
-    with open(file_name, 'rb') as in_file:
-        for f in in_file.read(128):
-            h.update(f)
 
-    return h.hexdigest()
 
 
 def find_matches(new_file_name, old_sigs_d):
@@ -242,8 +287,13 @@ def GO():
     patch_file_name = path.join(path.split(new_file_name)[0],path.split(new_file_name)[1] + '.patch')
 
     write_sigs(generate_sigs(old_file_name), sig_file_name)
+    pp.pprint(read_sig_attributes(sig_file_name))
 
-    find_matches(new_file_name, read_sigs(sig_file_name))
+    sigs = read_sigs(sig_file_name)
+
+
+
+    find_matches(new_file_name, sigs)
 
     #old_file_name = '../test/v1.crypt'
     #new_file_name = '../test/v2.crypt'
