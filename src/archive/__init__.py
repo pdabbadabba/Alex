@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-from node import Node
 import os
 
 
 class Archive(object):
+	
+	sig_suffix = '.sig'
 	
 	@classmethod
 	def from_sig_path(_cls, sig_file_path, node_name, node_path, sys):
@@ -23,6 +24,9 @@ class Archive(object):
 	@property
 	def original_present(_self):
 		return os.path.exists(_self.path)
+	@property
+	def sig_present(_self):
+		return os.path.exists(_self.sig_file_path)
 				
 	@property
 	def id(_self):
@@ -38,8 +42,13 @@ class Archive(object):
 		# The node-relative path is the portion of the absolute path to the 
 		# archive that follows the absolute path to the node
 		return _self.path[len(node_abspath):].lstrip('/')
+		
+		
 	@property	
 	def sys_path(_self):
-
 		return os.path.join(_self.node_path, _self.sys.sys_sub_dir, _self.node_relative_path)
+		
+	@property
+	def sig_file_path(_self):
+		return _self.sys_path + _self.sig_suffix
 		
